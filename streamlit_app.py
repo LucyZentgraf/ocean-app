@@ -13,7 +13,7 @@ from datetime import datetime
 
 # --- Page Setup ---
 st.set_page_config(layout="wide")
-st.title("OCEAN Demo v.0.03.01")
+st.title("OCEAN Demo v.0.03.03")
 
 # --- Turfcut ID Generator (simple in-memory counter for demo) ---
 if "turfcut_counter" not in st.session_state:
@@ -73,10 +73,17 @@ if polygon:
         buildings_gdf = None
 
 # --- Step 4: Address Extraction and Geocoding ---
+
 if buildings_gdf is not None and not buildings_gdf.empty:
+    flag_list = []
+    address_list = []
+    member_name_list = []
+    comment_list = []
+    result_list = []
     geolocator = Nominatim(user_agent="sidewalksort")
     geocode = RateLimiter(geolocator.reverse, min_delay_seconds=1)
 
+    
     housenumber_col = "addr:housenumber" if "addr:housenumber" in buildings_gdf.columns else None
     street_col = "addr:street" if "addr:street" in buildings_gdf.columns else None
 
@@ -130,14 +137,13 @@ if buildings_gdf is not None and not buildings_gdf.empty:
             resolved = "No address"
             flag = "error"
             note = "No data or error"
+    
+    flag_list.append(flag)
+    address_list.append(resolved)
+    member_name_list.append(member_name)
+    comment_list.append(comment)
+    result_list.append(note)
 
-        final_data.append({
-            "flag": flag,
-            "Address": resolved,
-            "member name": member_name,
-            "Comment": comment,
-            "result": note
-        })
 
         progress_bar.progress((i + 1) / total)
         status_text.text(f"Processed {i + 1}/{total}")
@@ -145,10 +151,16 @@ if buildings_gdf is not None and not buildings_gdf.empty:
     progress_bar.empty()
     status_text.text("Done!")
 
-    final_df = pd.DataFrame(final_data).drop_duplicates()
+final_df = pd.DataFrame({
+    "flag": flag_list,
+    "Address": address_list,
+    "member name": member_name_list,
+    "Comment": comment_list,
+    "result": result_list
+}).drop_duplicates()
 
     # --- Step 5: Routing ---
-    st.markdown("🧭 Routing")
+    st.markdown("Route")
     geocoded_points = []
     routing_bar = st.progress(0)
     route_status = st.empty()
@@ -187,6 +199,8 @@ if buildings_gdf is not None and not buildings_gdf.empty:
             st.warning(f"Routing failed, falling back to linear address order: {e}")
             fallback_map = folium.Map(location=[geocoded_points[0][0], geocoded_points[0][1]], zoom_start=15)
             folium.PolyLine([(lat, lon) for lat, lon in geocoded_points])
+            
+
 # --- Step 6: Output final turfcut table ---
 if final_df is not None and not final_df.empty:
     turfcut_id = generate_turfcut_id()
