@@ -8,25 +8,24 @@ from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 import folium
 from streamlit_folium import st_folium
-import tempfile
 
 # --- Title & Instructions ---
 st.set_page_config(layout="wide")
 st.title("SidewalkSort: Residential Address Routing Tool")
 
-
 # --- File Upload ---
-uploaded_csv = st.file_uploader("Upload CSV with addresses (column: 'address')", type="csv")
+uploaded_csv = st.file_uploader("Upload CSV with member data (column: 'address')", type="csv")
 
 # --- Turf Map ---
-st.markdown("### Step 2: Draw your area of interest")
-with st.expander("Draw polygon on map"):
+st.markdown("### Draw Turf")
+with st.expander("Draw polygon in town"):
     m = folium.Map(location=[40.7128, -74.006], zoom_start=13)
     draw = folium.plugins.Draw(export=True)
     draw.add_to(m)
     output = st_folium(m, width=700, height=500, returned_objects=["last_active_drawing"])
 
 # --- Load Address Data ---
+df = None
 if uploaded_csv:
     df = pd.read_csv(uploaded_csv)
     if 'address' not in df.columns:
@@ -47,14 +46,14 @@ if polygon:
     st.markdown("### Step 3: Downloading building data from OSM...")
     try:
         tags = {"building": True}
-        ox.geometries_from_polygon(polygon, tags)
+        buildings_gdf = ox.geometries_from_polygon(polygon, tags)
         buildings_gdf = buildings_gdf[buildings_gdf.geometry.type == 'Polygon']
         st.success(f"Downloaded {len(buildings_gdf)} building footprints.")
     except Exception as e:
         st.error(f"Error pulling OSM data: {e}")
 
 # --- Reverse Geocoding & Address Matching ---
-if buildings_gdf is not None and uploaded_csv:
+if buildings_gdf is not None and df is not None:
     st.markdown("### Step 4: Matching and Geocoding")
     geolocator = Nominatim(user_agent="sidewalksort")
     geocode = RateLimiter(geolocator.reverse, min_delay_seconds=1)
@@ -66,6 +65,7 @@ if buildings_gdf is not None and uploaded_csv:
         except:
             return "Unknown"
 
+    # Compose OSM addresses from tags
     buildings_gdf["osm_address"] = buildings_gdf["addr:housenumber"].fillna("") + " " + buildings_gdf["addr:street"].fillna("")
     buildings_gdf["osm_address"] = buildings_gdf["osm_address"].str.strip()
 
@@ -80,14 +80,22 @@ if buildings_gdf is not None and uploaded_csv:
         else:
             unknown.append(addr)
 
-    st.write(f"Matched: {len(matched)} | Reverse-geocoded: {len(reverse)} | Unknown: {len(unknown)}")
+    st.markdown(f"**Matched:** {len(matched)} &nbsp;&nbsp;|&nbsp;&nbsp; **Reverse-geocoded:** {len(reverse)} &nbsp;&nbsp;|&nbsp;&nbsp; **Unknown:** {len(unknown)}")
+    st.markdown("---")
 
-    # Display matched addresses
-    route_df = pd.DataFrame({"address": matched + reverse + unknown})
-    st.dataframe(route_df)
+    # Create DataFrame for display and download
+    route_df = pd.DataFrame({
+        "Address": matched + reverse + unknown
+    })
 
-    # Download button
-    st.download_button("Download Ordered Address List", route_df.to_csv(index=False), "sorted_addresses.csv")
+    st.dataframe(route_df, height=300)
+
+    st.download_button(
+        label="Download Ordered Address List as CSV",
+        data=route_df.to_csv(index=False),
+        file_name="sorted_addresses.csv",
+        mime="text/csv"
+    )
 
 # --- Footer ---
 st.markdown("---")
