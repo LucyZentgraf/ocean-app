@@ -4,7 +4,6 @@ import pandas as pd
 import osmnx as ox
 from osmnx.features import features_from_polygon
 from shapely.geometry import Polygon, Point, LineString
-from shapely.ops import nearest_points
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 import folium
@@ -12,83 +11,80 @@ from folium import plugins
 from streamlit_folium import st_folium
 from datetime import datetime
 from rapidfuzz import process
-import time
 
 # --- Page Setup ---
 st.set_page_config(layout="wide")
-st.title("OCEAN Demo v.0.05.00")
+st.title("OCEAN Demo v0.05.02")
 
+# Turf Cut ID generator
 if "turfcut_counter" not in st.session_state:
     st.session_state.turfcut_counter = 1
 
-def generate_turfcut_id(number=None):
+def generate_turfcut_id():
     year_code = datetime.now().strftime("%y")
-    if number is None:
-        number = st.session_state.turfcut_counter
-        st.session_state.turfcut_counter += 1
-    return f"TcID{year_code}{number:04d}"
+    counter = st.session_state.turfcut_counter
+    st.session_state.turfcut_counter += 1
+    return f"TcID{year_code}{counter:04d}"
 
-# --- Step 1: Upload Optional CSV ---
-uploaded_csv = st.file_uploader("Upload CSV with member data (columns: 'address', 'member name', 'comment')", type="csv")
+turfcut_id = generate_turfcut_id()
+
+# --- Step 1: Optional CSV Upload ---
+uploaded_csv = st.file_uploader("Upload optional CSV with columns: 'address', 'member name', 'comment'", type="csv")
 df = None
 if uploaded_csv:
-    with st.spinner("Loading CSV..."):
-        df = pd.read_csv(uploaded_csv)
-        required_cols = {"address", "member name", "comment"}
-        if not required_cols.issubset(df.columns):
-            st.error("CSV must include: 'address', 'member name', 'comment'")
-            df = None
-        else:
-            st.success(f"Loaded {len(df)} records.")
-            st.dataframe(df.head())
+    df = pd.read_csv(uploaded_csv)
+    required_cols = {"address", "member name", "comment"}
+    if not required_cols.issubset(df.columns):
+        st.error("CSV must include columns: 'address', 'member name', 'comment'")
+        df = None
+    else:
+        st.success(f"Loaded {len(df)} rows from CSV.")
+        st.dataframe(df.head())
 
-# --- Step 2: Draw Turf Area + Route Line + Markers ---
-st.markdown("Cut Turf")
-
-with st.expander("Draw polygon (turf), line (route), and marker(s)"):
-    m = folium.Map(location=[40.7128, -74.006], zoom_start=13)
+# --- Step 2: Draw Area and Route ---
+st.markdown("### Draw area of interest and optional route")
+with st.expander("Draw polygon, route line, and start/end markers"):
+    m = folium.Map(location=[40.7128, -74.0060], zoom_start=13)
     draw = plugins.Draw(
         export=True,
         draw_options={
             "polyline": True,
-            "circle": False,
-            "rectangle": False,
-            "circlemarker": False,
+            "polygon": True,
             "marker": True,
-            "polygon": True
+            "rectangle": False,
+            "circle": False,
+            "circlemarker": False
         }
     )
     draw.add_to(m)
-    output = st_folium(m, width=700, height=500, returned_objects=["all_drawings"])
+    output = st_folium(m, width=700, height=500, returned_objects=["all_drawings"]) or {}
 
-polygon = None
-route_line = None
-start_point = None
-end_point = None
-
-if output and output.get("all_drawings"):
+# --- Step 3: Parse Drawings ---
+polygon, route_line, start_point, end_point = None, None, None, None
+if output.get("all_drawings"):
     for obj in output["all_drawings"]:
-        geom_type = obj["geometry"]["type"]
-        coords = obj["geometry"]["coordinates"]
-        if geom_type == "Polygon":
+        g = obj["geometry"]
+        coords = g["coordinates"]
+        if g["type"] == "Polygon":
             polygon = Polygon([(lng, lat) for lng, lat in coords[0]])
-        elif geom_type == "LineString":
+        elif g["type"] == "LineString":
             route_line = LineString([(lng, lat) for lng, lat in coords])
-        elif geom_type == "Point" and isinstance(coords, list) and len(coords) == 2:
+        elif g["type"] == "Point":
             if not start_point:
                 start_point = (coords[1], coords[0])
             else:
                 end_point = (coords[1], coords[0])
-    if polygon:
-        st.success("Polygon drawn.")
-    if route_line:
-        st.success("Route line drawn.")
-    if start_point:
-        st.success(f"Start point selected: ({start_point[0]:.5f}, {start_point[1]:.5f})")
-    if end_point:
-        st.success(f"End point selected: ({end_point[0]:.5f}, {end_point[1]:.5f})")
 
-# --- Step 3: OSM Building Extraction ---
+    if polygon:
+        st.success("✅ Polygon drawn.")
+    if route_line:
+        st.success("✅ Route line drawn.")
+    if start_point:
+        st.info(f"Start point: {start_point}")
+    if end_point:
+        st.info(f"End point: {end_point}")
+
+# --- Step 4: Pull OSM Buildings ---
 buildings_gdf = None
 if polygon:
     with st.spinner("Pulling building footprints..."):
@@ -98,125 +94,125 @@ if polygon:
             buildings_gdf = buildings_gdf[buildings_gdf.geometry.is_valid]
             buildings_gdf = buildings_gdf[buildings_gdf.geometry.type.isin(['Polygon', 'MultiPolygon'])]
 
-            def simplify_geom(geom):
-                if geom.geom_type == 'MultiPolygon':
-                    if len(geom.geoms) == 0:
-                        return None
-                    return max(geom.geoms, key=lambda a: a.area)
-                return geom
+            def simplify(geom):
+                return max(geom.geoms, key=lambda g: g.area) if geom.type == 'MultiPolygon' else geom
 
-            buildings_gdf['geometry'] = buildings_gdf['geometry'].apply(simplify_geom)
-            buildings_gdf = buildings_gdf[buildings_gdf['geometry'].notnull()]
-            buildings_gdf = buildings_gdf[~buildings_gdf['geometry'].is_empty]
-            buildings_gdf = buildings_gdf[~buildings_gdf["building"].isin([
-                "commercial", "industrial", "retail", "garage", "service", "warehouse", "school", "university"
-            ])]
+            buildings_gdf['geometry'] = buildings_gdf['geometry'].apply(simplify)
+            buildings_gdf = buildings_gdf.dropna(subset=['geometry'])
+            buildings_gdf = buildings_gdf[~buildings_gdf.geometry.is_empty]
 
-            if buildings_gdf.empty:
-                st.warning("No buildings found. Trying fallback...")
-                tags = {"man_made": "building"}
-                buildings_gdf = features_from_polygon(polygon, tags)
-                buildings_gdf['geometry'] = buildings_gdf['geometry'].apply(simplify_geom)
-                buildings_gdf = buildings_gdf[buildings_gdf['geometry'].notnull()]
+            # Filter non-residential
+            nonres = {"commercial", "industrial", "retail", "garage", "service", "warehouse", "school", "university"}
+            buildings_gdf = buildings_gdf[~buildings_gdf["building"].isin(nonres)]
 
             if len(buildings_gdf) > 99:
-                st.warning("Limiting to 99 buildings for performance.")
+                st.warning("⚠ Too many buildings. Capping to 99.")
                 buildings_gdf = buildings_gdf.head(99)
 
-            st.success(f"{len(buildings_gdf)} building footprints loaded.")
+            st.success(f"{len(buildings_gdf)} valid building footprints loaded.")
         except Exception as e:
-            st.error(f"Error pulling OSM data: {e}")
+            st.error(f"Error loading OSM buildings: {e}")
+            buildings_gdf = None
 
-# --- Step 4: Geocode & Match ---
-if buildings_gdf is not None and not buildings_gdf.empty:
-    with st.spinner("Processing and matching addresses..."):
-        geolocator = Nominatim(user_agent="sidewalksort")
-        geocode = RateLimiter(geolocator.reverse, min_delay_seconds=1)
+# --- Step 5: Match + Reverse Geocode ---
+if buildings_gdf is not None:
+    st.markdown("### Processing Buildings")
+    geolocator = Nominatim(user_agent="OCEAN_app")
+    geocode = RateLimiter(geolocator.reverse, min_delay_seconds=1)
+    addr_list, name_list, comment_list, flag_list, note_list = [], [], [], [], []
 
-        flag_list, address_list, name_list, comment_list, note_list = [], [], [], [], []
-        cache = {}
-        total = len(buildings_gdf)
-        progress = st.progress(0, text="Starting geocoding...")
+    # Check which columns are available
+    hn_col = "addr:housenumber" if "addr:housenumber" in buildings_gdf.columns else None
+    st_col = "addr:street" if "addr:street" in buildings_gdf.columns else None
 
-        for i, (_, row) in enumerate(buildings_gdf.iterrows()):
-            geom = row.geometry
-            centroid = geom.centroid
-            key = f"{centroid.y:.5f},{centroid.x:.5f}"
-            addr = row.get("addr:housenumber", "") + " " + row.get("addr:street", "")
-            addr = addr.strip()
-            resolved, flag, note = "", "", ""
-            member_name, comment = "", ""
+    address_cache = {}
+    total = len(buildings_gdf)
+    progress = st.progress(0, text="Geocoding 0%")
 
-            try:
-                if df is not None and addr:
-                    match, score, _ = process.extractOne(addr, df["address"], score_cutoff=85) or (None, None, None)
-                    matched_row = df[df["address"] == match] if match else pd.DataFrame()
-                    if not matched_row.empty:
-                        member_name = matched_row["member name"].values[0]
-                        comment = matched_row["comment"].values[0]
-                        resolved = addr
-                        flag = "match"
-                        note = "Matched from OSM"
-                    else:
-                        flag = "fallback"
-                        resolved = addr
-                        note = "No match found"
-                elif addr:
-                    resolved = addr
-                    flag = "raw"
-                    note = "Unmatched OSM address"
+    for i, (_, row) in enumerate(buildings_gdf.iterrows()):
+        geom = row.geometry
+        addr = ""
+        if hn_col:
+            addr += str(row[hn_col]) + " "
+        if st_col:
+            addr += str(row[st_col])
+        addr = addr.strip()
+
+        resolved, flag, note, name, comment = "", "", "", "", ""
+        try:
+            if addr and df is not None:
+                match, score, _ = process.extractOne(addr, df["address"], score_cutoff=85) or (None, None, None)
+                if match:
+                    row_match = df[df["address"] == match].iloc[0]
+                    resolved = match
+                    name = row_match["member name"]
+                    comment = row_match["comment"]
+                    flag = "match"
+                    note = "Matched to CSV"
                 else:
-                    if key in cache:
-                        resolved = cache[key]
-                    else:
-                        loc = geocode((centroid.y, centroid.x))
-                        resolved = loc.address if loc else "Unknown"
-                        cache[key] = resolved
-                    flag = "reverse"
-                    note = "Reverse geocoded"
+                    raise ValueError("No fuzzy match found.")
+            elif addr:
+                resolved = addr
+                flag = "partial"
+                note = "Address from OSM only"
+            else:
+                # Reverse geocode fallback
+                key = f"{geom.centroid.y:.5f},{geom.centroid.x:.5f}"
+                resolved = address_cache.get(key)
+                if not resolved:
+                    location = geocode((geom.centroid.y, geom.centroid.x))
+                    resolved = location.address if location else "Unknown"
+                    address_cache[key] = resolved
+                flag = "reverse"
+                note = "Reverse geocoded"
+        except Exception as e:
+            resolved = "Error processing"
+            note = f"Error: {e}"
+            flag = "error"
 
-            except Exception as e:
-                resolved = "Error"
-                flag = "error"
-                note = str(e)
+        addr_list.append(resolved)
+        name_list.append(name)
+        comment_list.append(comment)
+        flag_list.append(flag)
+        note_list.append(note)
 
-            flag_list.append(flag)
-            address_list.append(resolved)
-            name_list.append(member_name)
-            comment_list.append(comment)
-            note_list.append(note)
+        percent = (i + 1) / total
+        progress.progress(percent, text=f"Geocoding {int(percent * 100)}%")
 
-            progress.progress((i + 1) / total, text=f"Geocoding: {(i + 1)}/{total}")
+    progress.progress(1.0, text="Done")
 
-        progress.progress(1.0, text="Geocoding Complete")
+    buildings_gdf["address"] = addr_list
+    buildings_gdf["member name"] = name_list
+    buildings_gdf["comment"] = comment_list
+    buildings_gdf["flag"] = flag_list
+    buildings_gdf["note"] = note_list
 
-        buildings_gdf["address"] = address_list
-        buildings_gdf["member_name"] = name_list
-        buildings_gdf["comment"] = comment_list
-        buildings_gdf["flag"] = flag_list
-        buildings_gdf["note"] = note_list
+    # --- Step 6: Sort by Route or Proximity ---
+    if route_line:
+        def project(pt):
+            return route_line.project(pt)
+        buildings_gdf["route_order"] = buildings_gdf.geometry.centroid.apply(project)
+        buildings_gdf = buildings_gdf.sort_values("route_order")
+    elif start_point:
+        sp = Point(start_point[1], start_point[0])
+        buildings_gdf["dist"] = buildings_gdf.geometry.centroid.distance(sp)
+        buildings_gdf = buildings_gdf.sort_values("dist")
+    else:
+        buildings_gdf["order"] = list(range(len(buildings_gdf)))
 
-# --- Step 5: Routing ---
-        if route_line:
-            def project(pt): return route_line.project(route_line.interpolate(route_line.project(pt)))
-            buildings_gdf["order"] = buildings_gdf.geometry.centroid.apply(project)
-            buildings_gdf = buildings_gdf.sort_values("order")
-        elif start_point:
-            start_geom = Point(start_point[1], start_point[0])
-            buildings_gdf["order"] = buildings_gdf.geometry.centroid.distance(start_geom)
-            buildings_gdf = buildings_gdf.sort_values("order")
-        else:
-            buildings_gdf["order"] = range(len(buildings_gdf))
+    # --- Step 7: Output Table + Download ---
+    st.markdown("### 🧾 Final Address Table")
+    final_df = buildings_gdf[["address", "member name", "comment", "flag", "note"]]
+    st.dataframe(final_df, height=400)
 
-# --- Step 6: Output Table & CSV ---
-        st.markdown("### 📋 Final Sorted Address List")
-        output_df = buildings_gdf[["address", "member_name", "comment", "flag", "note"]]
-        st.dataframe(output_df, height=400)
-
-        csv = output_df.to_csv(index=False)
-        st.download_button("Download Turf Log", csv, file_name="turfcut_results.csv", mime="text/csv")
+    csv_data = final_df.to_csv(index=False)
+    st.download_button(
+        label=f"📥 Download CSV ({turfcut_id})",
+        data=csv_data,
+        file_name=f"{turfcut_id}_results.csv",
+        mime="text/csv"
+    )
 
 # --- Footer ---
 st.markdown("---")
-st.caption("© 2025 Lucy Zentgraf. All rights reserved.")
-
+st.caption("© 2025 Lucy Zentgraf for NYPIRG FUND. All rights reserved.")
