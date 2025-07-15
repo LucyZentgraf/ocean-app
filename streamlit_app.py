@@ -91,10 +91,14 @@ if polygon:
 
             def simplify_geom(geom):
                 if geom.geom_type == 'MultiPolygon':
+                    if len(geom.geoms) == 0:
+                        return None
                     return max(geom.geoms, key=lambda a: a.area)
                 return geom
 
             buildings_gdf['geometry'] = buildings_gdf['geometry'].apply(simplify_geom)
+            buildings_gdf = buildings_gdf[buildings_gdf['geometry'].notnull()]
+            buildings_gdf = buildings_gdf[~buildings_gdf['geometry'].is_empty]
 
             buildings_gdf = buildings_gdf[~buildings_gdf["building"].isin([
                 "commercial", "industrial", "retail", "garage", "service", "warehouse", "school", "university"
@@ -106,6 +110,8 @@ if polygon:
                 buildings_gdf = buildings_gdf[buildings_gdf.geometry.is_valid]
                 buildings_gdf = buildings_gdf[buildings_gdf.geometry.type.isin(['Polygon', 'MultiPolygon'])]
                 buildings_gdf['geometry'] = buildings_gdf['geometry'].apply(simplify_geom)
+                buildings_gdf = buildings_gdf[buildings_gdf['geometry'].notnull()]
+                buildings_gdf = buildings_gdf[~buildings_gdf['geometry'].is_empty]
             st.success(f"{len(buildings_gdf)} building/structure footprints loaded.")
 
             if len(buildings_gdf) > 99:
@@ -150,41 +156,40 @@ if buildings_gdf is not None and not buildings_gdf.empty:
             addr = row["osm_address"]
             flag, resolved, note, member_name, comment = "", "", "", "", ""
 
-            if df is not None:
-                matched_address, score, idx = process.extractOne(addr, df["address"], score_cutoff=85)
-                if matched_address:
-                    matched_row = df[df["address"] == matched_address].head(1)
-                else:
-                    matched_row = pd.DataFrame()
-                if not matched_row.empty:
-                    member_name = matched_row["member name"].values[0]
-                    comment = matched_row["comment"].values[0]
+            try:
+                if df is not None:
+                    matched_address, score, idx = process.extractOne(addr, df["address"], score_cutoff=85) or (None, None, None)
+                    matched_row = df[df["address"] == matched_address].head(1) if matched_address else pd.DataFrame()
+                    if not matched_row.empty:
+                        member_name = matched_row["member name"].values[0]
+                        comment = matched_row["comment"].values[0]
 
-            if addr and df is not None and matched_row is not None and not matched_row.empty:
-                resolved = addr
-                flag = "match"
-                note = "Matched from OSM"
-            elif addr:
-                key = f"{geom.centroid.y:.5f},{geom.centroid.x:.5f}"
-                if key in address_cache:
-                    resolved = address_cache[key]
-                else:
-                    try:
+                if addr and df is not None and not matched_row.empty:
+                    resolved = addr
+                    flag = "match"
+                    note = "Matched from OSM"
+                elif addr:
+                    key = f"{geom.centroid.y:.5f},{geom.centroid.x:.5f}"
+                    if key in address_cache:
+                        resolved = address_cache[key]
+                    else:
                         if geom.is_empty:
                             resolved = "Invalid geometry"
                         else:
                             with st.spinner("Reverse geocoding address..."):
                                 loc = geocode((geom.centroid.y, geom.centroid.x))
                                 resolved = loc.address if loc else "Unknown"
-                    except Exception as e:
-                        resolved = f"Geocode error: {e}"
-                    address_cache[key] = resolved
-                flag = "reverse"
-                note = "Reverse geocoded"
-            else:
-                resolved = "No address"
-                flag = "error"
-                note = "No data or error"
+                        address_cache[key] = resolved
+                    flag = "reverse"
+                    note = "Reverse geocoded"
+                else:
+                    resolved = "No address"
+                    flag = "error"
+                    note = "No data or error"
+            except Exception as e:
+                resolved = f"Fallback: {addr if addr else 'N/A'}"
+                flag = "fallback"
+                note = f"Fallback triggered: {e}"
 
             flag_list.append(flag)
             address_list.append(resolved)
