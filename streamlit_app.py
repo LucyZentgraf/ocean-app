@@ -143,10 +143,8 @@ if buildings_gdf is not None and not buildings_gdf.empty:
     member_name_list.append(member_name)
     comment_list.append(comment)
     result_list.append(note)
-
-
-        progress_bar.progress((i + 1) / total)
-        status_text.text(f"Processed {i + 1}/{total}")
+    progress_bar.progress((i + 1) / total)
+    status_text.text(f"Processed {i + 1}/{total}")
 
     progress_bar.empty()
     status_text.text("Done!")
