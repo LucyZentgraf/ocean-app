@@ -2,7 +2,7 @@ import streamlit as st
 import geopandas as gpd
 import pandas as pd
 import osmnx as ox
-from osmnx.features import features_from_polygon  # ✅ Fix for latest osmnx
+from osmnx.features import features_from_polygon
 import networkx as nx
 from shapely.geometry import Point, Polygon
 from geopy.geocoders import Nominatim
@@ -10,22 +10,13 @@ from geopy.extra.rate_limiter import RateLimiter
 import folium
 from streamlit_folium import st_folium
 
-# --- Title & Instructions ---
+# --- Page Setup ---
 st.set_page_config(layout="wide")
-st.title("SidewalkSort: Residential Address Routing Tool")
+st.title("OCEAN Demo")
 
-# --- File Upload ---
-uploaded_csv = st.file_uploader("Upload CSV with addresses (column: 'address')", type="csv")
+# --- Step 1: Upload CSV ---
+uploaded_csv = st.file_uploader("Upload CSV with member data (column: 'address')", type="csv")
 
-# --- Turf Map ---
-st.markdown("### Step 2: Draw your area of interest")
-with st.expander("Draw polygon on map"):
-    m = folium.Map(location=[40.7128, -74.006], zoom_start=13)
-    draw = folium.plugins.Draw(export=True)
-    draw.add_to(m)
-    output = st_folium(m, width=700, height=500, returned_objects=["last_active_drawing"])
-
-# --- Load Address Data ---
 df = None
 if uploaded_csv:
     df = pd.read_csv(uploaded_csv)
@@ -34,28 +25,40 @@ if uploaded_csv:
     else:
         st.success(f"Loaded {len(df)} addresses.")
 
-# --- Extract Polygon ---
+        # Preview uploaded addresses
+        st.markdown("### 📄 Uploaded Address Table")
+        st.dataframe(df, height=300)
+
+# --- Step 2: Draw Map Polygon ---
+st.markdown("Draw Turf")
+with st.expander("Click to draw polygon"):
+    m = folium.Map(location=[40.7128, -74.006], zoom_start=13)
+    draw = folium.plugins.Draw(export=True)
+    draw.add_to(m)
+    output = st_folium(m, width=700, height=500, returned_objects=["last_active_drawing"])
+
+# --- Step 3: Extract Polygon & Get OSM Buildings ---
 polygon = None
+buildings_gdf = None
+
 if output and output.get("last_active_drawing"):
     coords = output["last_active_drawing"]["geometry"]["coordinates"][0]
     polygon = Polygon([(pt[0], pt[1]) for pt in coords])
     st.success("Polygon drawn.")
 
-# --- Process OSM Data ---
-buildings_gdf = None
 if polygon:
-    st.markdown("### Step 3: Downloading building data from OSM...")
+    st.markdown("Downloa Data")
     try:
         tags = {"building": True}
-        buildings_gdf = features_from_polygon(polygon, tags)  # ✅ Correct method for osmnx>=1.3
+        buildings_gdf = features_from_polygon(polygon, tags)
         buildings_gdf = buildings_gdf[buildings_gdf.geometry.type == 'Polygon']
         st.success(f"Downloaded {len(buildings_gdf)} building footprints.")
     except Exception as e:
         st.error(f"Error pulling OSM data: {e}")
 
-# --- Reverse Geocoding & Address Matching ---
+# --- Step 4: Match to CSV + Reverse Geocode ---
 if buildings_gdf is not None and df is not None:
-    st.markdown("### Step 4: Matching and Geocoding")
+    st.markdown("Review")
     geolocator = Nominatim(user_agent="sidewalksort")
     geocode = RateLimiter(geolocator.reverse, min_delay_seconds=1)
 
@@ -66,7 +69,6 @@ if buildings_gdf is not None and df is not None:
         except:
             return "Unknown"
 
-    # Compose OSM addresses from tags
     buildings_gdf["osm_address"] = buildings_gdf["addr:housenumber"].fillna("") + " " + buildings_gdf["addr:street"].fillna("")
     buildings_gdf["osm_address"] = buildings_gdf["osm_address"].str.strip()
 
@@ -84,15 +86,16 @@ if buildings_gdf is not None and df is not None:
     st.markdown(f"**Matched:** {len(matched)} &nbsp;&nbsp;|&nbsp;&nbsp; **Reverse-geocoded:** {len(reverse)} &nbsp;&nbsp;|&nbsp;&nbsp; **Unknown:** {len(unknown)}")
     st.markdown("---")
 
-    # Create DataFrame for display and download
+    # Create DataFrame and show result
     route_df = pd.DataFrame({
         "Address": matched + reverse + unknown
     })
 
+    st.markdown("### 📍 Final Address Table (Matched + Reverse + Unknown)")
     st.dataframe(route_df, height=300)
 
     st.download_button(
-        label="Download Ordered Address List as CSV",
+        label="📥 Download Ordered Address List as CSV",
         data=route_df.to_csv(index=False),
         file_name="sorted_addresses.csv",
         mime="text/csv"
