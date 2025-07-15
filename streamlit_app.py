@@ -29,4 +29,4 @@ def generate_turfcut_id(number=None):
     return f"TcID{year_code}{number:04d}"
 
 # --- Step 1: Upload Optional CSV ---
-uploaded_csv = st.file_uploade
+uploaded_csv = st.file_uploader
