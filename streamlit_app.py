@@ -188,26 +188,30 @@ if buildings_gdf is not None and not buildings_gdf.empty:
             fallback_map = folium.Map(location=[geocoded_points[0][0], geocoded_points[0][1]], zoom_start=15)
             folium.PolyLine([(lat, lon) for lat, lon in geocoded_points])
 # --- Step 6: Output final turfcut table ---
-turfcut_id = generate_turfcut_id()
-st.markdown(f"### Turfcut ID: {turfcut_id}")
+if final_df is not None and not final_df.empty:
+    turfcut_id = generate_turfcut_id()
+    st.markdown(f"### Turfcut ID: {turfcut_id}")
 
-# Vertical (transposed) display of the table
-def vertical_table(df):
-    for idx, row in df.iterrows():
-        st.markdown(f"---\n**Record {idx+1}**")
-        for col in df.columns:
-            st.write(f"**{col}**: {row[col]}")
+    # Vertical (transposed) display of the table
+    def vertical_table(df):
+        for idx, row in df.iterrows():
+            st.markdown(f"---\n**Record {idx+1}**")
+            for col in df.columns:
+                st.write(f"**{col}**: {row[col]}")
 
-vertical_table(final_df)
+    vertical_table(final_df)
 
-# Download button
-csv_data = final_df.to_csv(index=False)
-st.download_button(
-    label="Download Turf Log CSV",
-    data=csv_data,
-    file_name=f"{turfcut_id}_turf_log.csv",
-    mime="text/csv"
-)
+    # Download button
+    csv_data = final_df.to_csv(index=False)
+    st.download_button(
+        label="Download Turf Log CSV",
+        data=csv_data,
+        file_name=f"{turfcut_id}_turf_log.csv",
+        mime="text/csv"
+    )
+else:
+    st.warning("No turfcut data to display.")
+
 # --- Footer ---
 st.markdown("---")
 st.markdown("Demo made for NYPIRG FUND by Lucy Zentgraf, 2025. All Rights Reserved")
