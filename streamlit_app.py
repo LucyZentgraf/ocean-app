@@ -13,7 +13,7 @@ import tempfile
 # --- Title & Instructions ---
 st.set_page_config(layout="wide")
 st.title("SidewalkSort: Residential Address Routing Tool")
-Upload a CSV with member addresses
+
 
 # --- File Upload ---
 uploaded_csv = st.file_uploader("Upload CSV with addresses (column: 'address')", type="csv")
