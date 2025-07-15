@@ -11,7 +11,7 @@ from streamlit_folium import st_folium
 
 # --- Title & Instructions ---
 st.set_page_config(layout="wide")
-st.title("SidewalkSort: Residential Address Routing Tool")
+st.title("Open Community Engagement/Action Network (c) 2025")
 
 # --- File Upload ---
 uploaded_csv = st.file_uploader("Upload CSV with member data (column: 'address')", type="csv")
