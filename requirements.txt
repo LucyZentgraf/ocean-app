@@ -1,6 +1,6 @@
 streamlit
 geopandas
-osmnx==1.3.0
+osmnx==1.1.2
 networkx
 pandas
 shapely
