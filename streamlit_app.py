@@ -186,7 +186,7 @@ if buildings_gdf is not None and not buildings_gdf.empty:
             fallback = True
             st.warning(f"Routing failed, falling back to linear address order: {e}")
             fallback_map = folium.Map(location=[geocoded_points[0][0], geocoded_points[0][1]], zoom_start=15)
-            folium.PolyLine([(lat, lon) for lat,
+            folium.PolyLine([(lat, lon) for lat,])
 # --- Step 6: Output final turfcut table ---
 turfcut_id = generate_turfcut_id()
 st.markdown(f"### Turfcut ID: {turfcut_id}")
