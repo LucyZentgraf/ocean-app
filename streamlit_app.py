@@ -14,9 +14,8 @@ from streamlit_folium import st_folium
 st.set_page_config(layout="wide")
 st.title("OCEAN Demo")
 
-# --- Step 1: Upload CSV ---
+# --- Step 1: Optional CSV Upload ---
 uploaded_csv = st.file_uploader("Upload CSV with member data (column: 'address')", type="csv")
-
 df = None
 if uploaded_csv:
     df = pd.read_csv(uploaded_csv)
@@ -24,12 +23,10 @@ if uploaded_csv:
         st.error("CSV must have a column named 'address'")
     else:
         st.success(f"Loaded {len(df)} addresses.")
-
-        # Preview uploaded addresses
         st.markdown("### 📄 Uploaded Address Table")
         st.dataframe(df, height=300)
 
-# --- Step 2: Draw Map Polygon ---
+# --- Step 2: Draw Map Turf ---
 st.markdown("Draw Turf")
 with st.expander("Click to draw polygon"):
     m = folium.Map(location=[40.7128, -74.006], zoom_start=13)
@@ -37,7 +34,7 @@ with st.expander("Click to draw polygon"):
     draw.add_to(m)
     output = st_folium(m, width=700, height=500, returned_objects=["last_active_drawing"])
 
-# --- Step 3: Extract Polygon & Get OSM Buildings ---
+# --- Step 3: Download OSM Building Data ---
 polygon = None
 buildings_gdf = None
 
@@ -47,22 +44,25 @@ if output and output.get("last_active_drawing"):
     st.success("Polygon drawn.")
 
 if polygon:
-    st.markdown("Downloa Data")
+    st.markdown("Review Data")
     try:
         tags = {"building": True}
         buildings_gdf = features_from_polygon(polygon, tags)
         buildings_gdf = buildings_gdf[buildings_gdf.geometry.type == 'Polygon']
-        st.success(f"Downloaded {len(buildings_gdf)} building footprints.")
+        buildings_gdf = buildings_gdf[~buildings_gdf["building"].isin([
+            "commercial", "industrial", "retail", "garage", "service", "warehouse", "school", "university"
+        ])]
+        st.success(f"Downloaded {len(buildings_gdf)} filtered residential-like building footprints.")
     except Exception as e:
         st.error(f"Error pulling OSM data: {e}")
 
-# --- Step 4: Match to CSV + Reverse Geocode ---
-if buildings_gdf is not None and df is not None:
-    st.markdown("Review")
+# --- Step 4: Extract or Match Addresses ---
+if buildings_gdf is not None and not buildings_gdf.empty:
+    st.markdown("Addresses")
     geolocator = Nominatim(user_agent="sidewalksort")
     geocode = RateLimiter(geolocator.reverse, min_delay_seconds=1)
 
-    def get_address_from_geom(geom):
+    def get_address(geom):
         try:
             location = geocode((geom.centroid.y, geom.centroid.x))
             return location.address if location else "Unknown"
@@ -73,31 +73,36 @@ if buildings_gdf is not None and df is not None:
     buildings_gdf["osm_address"] = buildings_gdf["osm_address"].str.strip()
 
     matched, reverse, unknown = [], [], []
+
     for _, row in buildings_gdf.iterrows():
         addr = row["osm_address"]
-        if addr and addr in df["address"].values:
+        if df is not None and addr in df["address"].values:
             matched.append(addr)
         elif not addr or addr.strip() == "":
-            rev = get_address_from_geom(row.geometry)
+            rev = get_address(row.geometry)
             reverse.append(rev)
         else:
             unknown.append(addr)
 
-    st.markdown(f"**Matched:** {len(matched)} &nbsp;&nbsp;|&nbsp;&nbsp; **Reverse-geocoded:** {len(reverse)} &nbsp;&nbsp;|&nbsp;&nbsp; **Unknown:** {len(unknown)}")
-    st.markdown("---")
+    st.markdown(f"**Matched:** {len(matched)} | **Reverse-Geocoded:** {len(reverse)} | **Unknown:** {len(unknown)}")
 
-    # Create DataFrame and show result
-    route_df = pd.DataFrame({
+    # Combine all addresses for display
+    all_addresses = pd.DataFrame({
         "Address": matched + reverse + unknown
-    })
+    }).drop_duplicates()
 
-    st.markdown("### 📍 Final Address Table (Matched + Reverse + Unknown)")
-    st.dataframe(route_df, height=300)
+    # --- Step 5: Routing Stub (placeholder for future sidewalk-safe logic) ---
+    st.markdown("Route")
+    st.info("Routing based on pedestrian-safe sidewalk logic will be implemented in the next version. This version lists all extracted addresses.")
+
+    # --- Step 6: Final Table + Download ---
+    st.markdown("Turf Log)
+    st.dataframe(all_addresses, height=400)
 
     st.download_button(
-        label="📥 Download Ordered Address List as CSV",
-        data=route_df.to_csv(index=False),
-        file_name="sorted_addresses.csv",
+        label="Downloadv Turf Log",
+        data=all_addresses.to_csv(index=False),
+        file_name="ordered_addresses.csv",
         mime="text/csv"
     )
 
