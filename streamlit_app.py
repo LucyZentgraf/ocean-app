@@ -53,7 +53,6 @@ if polygon:
     st.markdown("### Step 3: Downloading building data from OSM...")
     try:
         tags = {"building": True}
-        ox.config(use_cache=True, log_console=False)
         buildings_gdf = ox.geometries_from_polygon(polygon, tags)
         buildings_gdf = buildings_gdf[buildings_gdf.geometry.type == 'Polygon']
         st.success(f"Downloaded {len(buildings_gdf)} building footprints.")
