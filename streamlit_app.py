@@ -43,7 +43,7 @@ if uploaded_csv:
             st.dataframe(df.head())
 
 # --- Step 2: Draw Turf Area + Route Line + Markers ---
-st.markdown("### 🗺️ Draw Turf Area and Route Line (optional)")
+st.markdown("Cut Turf")
 
 with st.expander("Draw polygon (turf), line (route), and marker(s)"):
     m = folium.Map(location=[40.7128, -74.006], zoom_start=13)
@@ -214,7 +214,7 @@ if buildings_gdf is not None and not buildings_gdf.empty:
         st.dataframe(output_df, height=400)
 
         csv = output_df.to_csv(index=False)
-        st.download_button("📥 Download CSV", csv, file_name="turfcut_results.csv", mime="text/csv")
+        st.download_button("Download Turf Log", csv, file_name="turfcut_results.csv", mime="text/csv")
 
 # --- Footer ---
 st.markdown("---")
