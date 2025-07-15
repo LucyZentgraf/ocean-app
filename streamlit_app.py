@@ -1,4 +1,4 @@
-import streamlit as st
+aimport streamlit as st
 import geopandas as gpd
 import pandas as pd
 import osmnx as ox
@@ -14,17 +14,12 @@ import tempfile
 st.set_page_config(layout="wide")
 st.title("SidewalkSort: Residential Address Routing Tool")
 st.markdown("""
-Upload a CSV with addresses and draw a polygon. This app:
-- Downloads buildings from OpenStreetMap
-- Identifies residential and unlisted buildings
-- Matches them to your address list
-- Generates a safe walking route using sidewalks and legal crossings
-""")
+Upload a CSV with member addresses
 
 # --- File Upload ---
 uploaded_csv = st.file_uploader("Upload CSV with addresses (column: 'address')", type="csv")
 
-# --- Map for Drawing Polygon ---
+# --- Turf Map ---
 st.markdown("### Step 2: Draw your area of interest")
 with st.expander("Draw polygon on map"):
     m = folium.Map(location=[40.7128, -74.006], zoom_start=13)
