@@ -3,21 +3,20 @@ import geopandas as gpd
 import pandas as pd
 import osmnx as ox
 from osmnx.features import features_from_polygon
-from shapely.geometry import Polygon, Point
+from shapely.geometry import Polygon, Point, LineString
+from shapely.ops import nearest_points
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 import folium
 from folium import plugins
 from streamlit_folium import st_folium
-import networkx as nx
-from networkx.algorithms.approximation import traveling_salesman_problem
 from datetime import datetime
 from rapidfuzz import process
 import time
 
 # --- Page Setup ---
 st.set_page_config(layout="wide")
-st.title("OCEAN Demo v.0.04.01")
+st.title("OCEAN Demo v.0.04.02")
 
 if "turfcut_counter" not in st.session_state:
     st.session_state.turfcut_counter = 1
@@ -42,14 +41,14 @@ if uploaded_csv:
             st.success(f"Loaded {len(df)} records.")
             st.dataframe(df.head())
 
-st.markdown("Draw Turf Area and Set Start Point")
+st.markdown("Draw Turf Area and Set Route")
 
-with st.expander("Click to draw polygon and place start marker"):
+with st.expander("Click to draw polygon, start/end marker, and route line"):
     m = folium.Map(location=[40.7128, -74.006], zoom_start=13)
     draw = plugins.Draw(
         export=True,
         draw_options={
-            "polyline": False,
+            "polyline": True,
             "circle": False,
             "rectangle": False,
             "circlemarker": False,
@@ -61,7 +60,9 @@ with st.expander("Click to draw polygon and place start marker"):
     output = st_folium(m, width=700, height=500, returned_objects=["all_drawings"])
 
 polygon = None
+route_line = None
 start_point = None
+end_point = None
 
 if output and output.get("all_drawings"):
     for obj in output["all_drawings"]:
@@ -69,16 +70,22 @@ if output and output.get("all_drawings"):
         coords = obj["geometry"]["coordinates"]
         if geom_type == "Polygon":
             polygon = Polygon([(lng, lat) for lng, lat in coords[0]])
+        elif geom_type == "LineString":
+            route_line = LineString([(lng, lat) for lng, lat in coords])
         elif geom_type == "Point" and isinstance(coords, list) and len(coords) == 2:
-            lng, lat = coords
-            start_point = (lat, lng)
+            if not start_point:
+                start_point = (coords[1], coords[0])
+            else:
+                end_point = (coords[1], coords[0])
 
     if polygon:
         st.success("Polygon drawn.")
+    if route_line:
+        st.success("Route line drawn.")
     if start_point:
         st.success(f"Start point selected at ({start_point[0]:.5f}, {start_point[1]:.5f})")
-
-loop_back = st.checkbox("Return to start point in route?", value=True)
+    if end_point:
+        st.success(f"End point selected at ({end_point[0]:.5f}, {end_point[1]:.5f})")
 
 buildings_gdf = None
 if polygon:
@@ -176,9 +183,8 @@ if buildings_gdf is not None and not buildings_gdf.empty:
                         if geom.is_empty:
                             resolved = "Invalid geometry"
                         else:
-                            with st.spinner("Reverse geocoding address..."):
-                                loc = geocode((geom.centroid.y, geom.centroid.x))
-                                resolved = loc.address if loc else "Unknown"
+                            loc = geocode((geom.centroid.y, geom.centroid.x))
+                            resolved = loc.address if loc else "Unknown"
                         address_cache[key] = resolved
                     flag = "reverse"
                     note = "Reverse geocoded"
@@ -208,56 +214,20 @@ if buildings_gdf is not None and not buildings_gdf.empty:
         buildings_gdf["flag"] = flag_list
         buildings_gdf["note"] = result_list
 
-    st.markdown("Generating pedestrian route network...")
-    with st.spinner("Loading pedestrian network and calculating optimal route..."):
-        try:
-            progress = st.progress(0, text="Routing: Starting...")
-            G = ox.graph_from_polygon(polygon, network_type='walk')
-            progress.progress(0.3, text="Routing: Pedestrian network loaded.")
+        turfcut_ids = [generate_turfcut_id(st.session_state.turfcut_counter + i) for i in range(len(buildings_gdf))]
+        buildings_gdf["Turfcut ID"] = turfcut_ids
+        st.session_state.turfcut_counter += len(buildings_gdf)
 
-            centroids = buildings_gdf.geometry.centroid
-            node_ids = []
-            for pt in centroids:
-                try:
-                    node = ox.distance.nearest_nodes(G, pt.x, pt.y)
-                    node_ids.append(node)
-                except:
-                    continue
-            if start_point:
-                try:
-                    start_node = ox.distance.nearest_nodes(G, start_point[1], start_point[0])
-                    node_ids.insert(0, start_node)
-                except:
-                    pass
+        # Sort by projected distance along the route line if available
+        if route_line:
+            def project_onto_route(pt):
+                projected_point = route_line.interpolate(route_line.project(pt))
+                return route_line.project(projected_point)
+            buildings_gdf["order_along_route"] = buildings_gdf.geometry.centroid.apply(project_onto_route)
+            buildings_gdf = buildings_gdf.sort_values("order_along_route")
 
-            if len(node_ids) < 2:
-                raise ValueError("Not enough valid routing nodes to generate path.")
-
-            progress.progress(0.6, text="Routing: Solving TSP...")
-            tsp_path = traveling_salesman_problem(G, node_ids, cycle=loop_back)
-
-            if tsp_path and len(tsp_path) > 1:
-                progress.progress(0.9, text="Routing: Plotting route map...")
-                route_map = ox.plot_route_folium(G, tsp_path, popup_attribute='name', tiles='cartodbpositron')
-                st.markdown("### Turfcut Route Map")
-                st_data = st_folium(route_map, width=800, height=600)
-            else:
-                st.warning("Route could not be generated. Falling back to unsorted building display.")
-
-            turfcut_ids = [generate_turfcut_id(st.session_state.turfcut_counter + i) for i in range(len(buildings_gdf))]
-            buildings_gdf["Turfcut ID"] = turfcut_ids
-            st.session_state.turfcut_counter += len(buildings_gdf)
-
-            st.markdown(f"#### Turfcut ID: {turfcut_ids[0]} - {turfcut_ids[-1]}")
-            progress.progress(1.0, text="Routing: Complete")
-
-        except Exception as e:
-            st.error(f"Routing failed: {e}")
-            st.info("Continuing with fallback unsorted building data.")
-            turfcut_ids = [generate_turfcut_id(st.session_state.turfcut_counter + i) for i in range(len(buildings_gdf))]
-            buildings_gdf["Turfcut ID"] = turfcut_ids
-            st.session_state.turfcut_counter += len(buildings_gdf)
-            st.markdown(f"#### Turfcut ID: {turfcut_ids[0]} - {turfcut_ids[-1]}")
+        st.markdown("### Route")
+        st.dataframe(buildings_gdf[["Turfcut ID", "address", "member_name", "comment", "flag", "note"]])
 
 # Footer
 st.markdown("---")
