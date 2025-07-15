@@ -2,6 +2,7 @@ import streamlit as st
 import geopandas as gpd
 import pandas as pd
 import osmnx as ox
+from osmnx.features import features_from_polygon  # ✅ Fix for latest osmnx
 import networkx as nx
 from shapely.geometry import Point, Polygon
 from geopy.geocoders import Nominatim
@@ -11,14 +12,14 @@ from streamlit_folium import st_folium
 
 # --- Title & Instructions ---
 st.set_page_config(layout="wide")
-st.title("Open Community Engagement/Action Network (c) 2025")
+st.title("SidewalkSort: Residential Address Routing Tool")
 
 # --- File Upload ---
-uploaded_csv = st.file_uploader("Upload CSV with member data (column: 'address')", type="csv")
+uploaded_csv = st.file_uploader("Upload CSV with addresses (column: 'address')", type="csv")
 
 # --- Turf Map ---
-st.markdown("### Draw Turf")
-with st.expander("Draw polygon in town"):
+st.markdown("### Step 2: Draw your area of interest")
+with st.expander("Draw polygon on map"):
     m = folium.Map(location=[40.7128, -74.006], zoom_start=13)
     draw = folium.plugins.Draw(export=True)
     draw.add_to(m)
@@ -46,7 +47,7 @@ if polygon:
     st.markdown("### Step 3: Downloading building data from OSM...")
     try:
         tags = {"building": True}
-        buildings_gdf = ox.geometries_from_polygon(polygon, tags)
+        buildings_gdf = features_from_polygon(polygon, tags)  # ✅ Correct method for osmnx>=1.3
         buildings_gdf = buildings_gdf[buildings_gdf.geometry.type == 'Polygon']
         st.success(f"Downloaded {len(buildings_gdf)} building footprints.")
     except Exception as e:
