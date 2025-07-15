@@ -13,7 +13,7 @@ from datetime import datetime
 
 # --- Page Setup ---
 st.set_page_config(layout="wide")
-st.title("OCEAN Demo with Routing & Turfcut ID")
+st.title("OCEAN Demo v.0.03.00")
 
 # --- Turfcut ID Generator (simple in-memory counter for demo) ---
 if "turfcut_counter" not in st.session_state:
