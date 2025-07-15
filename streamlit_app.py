@@ -14,7 +14,7 @@ from datetime import datetime
 
 # --- Page Setup ---
 st.set_page_config(layout="wide")
-st.title("OCEAN Demo v.0.03.05")
+st.title("OCEAN Demo v.0.03.06")
 
 if "turfcut_counter" not in st.session_state:
     st.session_state.turfcut_counter = 1
@@ -187,10 +187,32 @@ if buildings_gdf is not None and not buildings_gdf.empty:
     if len(geocoded_points) < 2:
         st.warning("Not enough valid geocoded points. Generating fallback route...")
         fallback_points = [(p.y, p.x) for p in buildings_gdf.centroid.to_list()]
-        fallback_graph = ox.graph_from_polygon(polygon, network_type='walk')
-        fallback_node_ids = [ox.distance.nearest_nodes(fallback_graph, x=pt[1], y=pt[0]) for pt in fallback_points]
-        fallback_subG = fallback_graph.subgraph(fallback_node_ids)
-        fallback_path = traveling_salesman_problem(fallback_subG, cycle=loop_back)
+fallback_graph = ox.graph_from_polygon(polygon, network_type='walk')
+
+valid_nodes = []
+for pt in fallback_points:
+    try:
+        node = ox.distance.nearest_nodes(fallback_graph, x=pt[1], y=pt[0])
+        valid_nodes.append(node)
+    except Exception:
+        continue
+
+if len(valid_nodes) < 2:
+    st.error("Fallback routing failed: Not enough valid nodes from centroid points.")
+else:
+    fallback_subG = fallback_graph.subgraph(valid_nodes)
+    fallback_path = traveling_salesman_problem(fallback_subG, cycle=loop_back)
+    route_map = folium.Map(location=start_point or fallback_points[0], zoom_start=15)
+    route_coords = []
+    for i in range(len(fallback_path)):
+        u = fallback_path[i]
+        v = fallback_path[(i + 1) % len(fallback_path)] if loop_back else fallback_path[i + 1] if i + 1 < len(fallback_path) else None
+        if v:
+            seg = nx.shortest_path(fallback_graph, u, v, weight="length")
+            route_coords.extend(seg if not route_coords else seg[1:])
+    ox.plot_route_folium(fallback_graph, route_coords, route_map, color='red', weight=4)
+    st_folium(route_map, width=800, height=500)
+
         route_map = folium.Map(location=start_point or fallback_points[0], zoom_start=15)
         route_coords = []
         for i in range(len(fallback_path)):
