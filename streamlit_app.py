@@ -3,7 +3,6 @@ import geopandas as gpd
 import pandas as pd
 import osmnx as ox
 from osmnx.features import features_from_polygon
-import networkx as nx
 from shapely.geometry import Point, Polygon
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
@@ -57,51 +56,98 @@ if polygon:
         st.error(f"Error pulling OSM data: {e}")
 
 # --- Step 4: Extract or Match Addresses ---
-if buildings_gdf is not None and not buildings_gdf.empty:
+if buildings_gdf is not None:
     st.markdown("Addresses")
+
+    # If no buildings found, try fallback to structures
+    if buildings_gdf.empty:
+        st.warning("No buildings found. Attempting to pull structures as fallback...")
+        try:
+            tags = {"man_made": "building"}
+            buildings_gdf = features_from_polygon(polygon, tags)
+            buildings_gdf = buildings_gdf[buildings_gdf.geometry.type == "Polygon"]
+            st.success(f"Downloaded {len(buildings_gdf)} structure polygons from OSM.")
+        except Exception as e:
+            st.error(f"Structure fallback failed: {e}")
+            buildings_gdf = None
+
+if buildings_gdf is not None and not buildings_gdf.empty:
     geolocator = Nominatim(user_agent="sidewalksort")
     geocode = RateLimiter(geolocator.reverse, min_delay_seconds=1)
 
-    def get_address(geom):
-        try:
-            location = geocode((geom.centroid.y, geom.centroid.x))
-            return location.address if location else "Unknown"
-        except:
-            return "Unknown"
+    # Debugging aid: show OSM tag columns
+    st.write("Available OSM columns:", buildings_gdf.columns.tolist())
 
-    buildings_gdf["osm_address"] = buildings_gdf["addr:housenumber"].fillna("") + " " + buildings_gdf["addr:street"].fillna("")
+    # Address construction with fallback
+    housenumber_col = "addr:housenumber" if "addr:housenumber" in buildings_gdf.columns else None
+    street_col = "addr:street" if "addr:street" in buildings_gdf.columns else None
+
+    if housenumber_col and street_col:
+        buildings_gdf["osm_address"] = buildings_gdf[housenumber_col].fillna("") + " " + buildings_gdf[street_col].fillna("")
+    elif street_col:
+        buildings_gdf["osm_address"] = buildings_gdf[street_col].fillna("")
+    elif housenumber_col:
+        buildings_gdf["osm_address"] = buildings_gdf[housenumber_col].fillna("")
+    else:
+        buildings_gdf["osm_address"] = ""
+
     buildings_gdf["osm_address"] = buildings_gdf["osm_address"].str.strip()
 
-    matched, reverse, unknown = [], [], []
+    # Caching results to prevent repeated geocoding
+    address_cache = {}
+
+    def safe_reverse_geocode(geom):
+        lat, lon = geom.centroid.y, geom.centroid.x
+        key = f"{lat:.5f},{lon:.5f}"
+        if key in address_cache:
+            return address_cache[key]
+        try:
+            location = geocode((lat, lon))
+            address = location.address if location else "Unknown"
+            address_cache[key] = address
+            return address
+        except Exception as e:
+            error_msg = f"Reverse geocode error: {e}"
+            address_cache[key] = error_msg
+            return error_msg
+
+    final_data = []
 
     for _, row in buildings_gdf.iterrows():
-        addr = row["osm_address"]
-        if df is not None and addr in df["address"].values:
-            matched.append(addr)
-        elif not addr or addr.strip() == "":
-            rev = get_address(row.geometry)
-            reverse.append(rev)
+        addr = row.get("osm_address", "").strip()
+        source = ""
+        note = ""
+
+        if df is not None and addr and addr in df["address"].values:
+            source = "OSM Match"
+        elif addr:
+            rev = safe_reverse_geocode(row.geometry)
+            source = "Reverse Geocoded"
+            if "error" in rev.lower():
+                note = rev
+            addr = rev
         else:
-            unknown.append(addr)
+            rev = safe_reverse_geocode(row.geometry)
+            source = "Reverse Geocoded (fallback)"
+            if "error" in rev.lower():
+                note = rev
+            addr = rev
 
-    st.markdown(f"**Matched:** {len(matched)} | **Reverse-Geocoded:** {len(reverse)} | **Unknown:** {len(unknown)}")
+        final_data.append({"Address": addr, "Source": source, "Note": note})
 
-    # Combine all addresses for display
-    all_addresses = pd.DataFrame({
-        "Address": matched + reverse + unknown
-    }).drop_duplicates()
+    final_df = pd.DataFrame(final_data).drop_duplicates()
 
-    # --- Step 5: Routing Stub (placeholder for future sidewalk-safe logic) ---
+    # --- Step 5: Routing Placeholder ---
     st.markdown("Route")
-    st.info("Routing based on pedestrian-safe sidewalk logic will be implemented in the next version. This version lists all extracted addresses.")
+    st.info("Routing based on pedestrian-safe sidewalk logic will be implemented in the next version.")
 
     # --- Step 6: Final Table + Download ---
     st.markdown("Turf Log")
-    st.dataframe(all_addresses, height=400)
+    st.dataframe(final_df, height=400)
 
     st.download_button(
-        label="Downloadv Turf Log",
-        data=all_addresses.to_csv(index=False),
+        label="Download Turf Log",
+        data=final_df.to_csv(index=False),
         file_name="ordered_addresses.csv",
         mime="text/csv"
     )
