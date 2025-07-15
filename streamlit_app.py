@@ -216,18 +216,33 @@ if buildings_gdf is not None and not buildings_gdf.empty:
             progress.progress(0.3, text="Routing: Pedestrian network loaded.")
 
             centroids = buildings_gdf.geometry.centroid
-            node_ids = [ox.distance.nearest_nodes(G, pt.x, pt.y) for pt in centroids]
+            node_ids = []
+            for pt in centroids:
+                try:
+                    node = ox.distance.nearest_nodes(G, pt.x, pt.y)
+                    node_ids.append(node)
+                except:
+                    continue
             if start_point:
-                start_node = ox.distance.nearest_nodes(G, start_point[1], start_point[0])
-                node_ids.insert(0, start_node)
+                try:
+                    start_node = ox.distance.nearest_nodes(G, start_point[1], start_point[0])
+                    node_ids.insert(0, start_node)
+                except:
+                    pass
+
+            if len(node_ids) < 2:
+                raise ValueError("Not enough valid routing nodes to generate path.")
 
             progress.progress(0.6, text="Routing: Solving TSP...")
             tsp_path = traveling_salesman_problem(G, node_ids, cycle=loop_back)
-            progress.progress(0.9, text="Routing: Plotting route map...")
 
-            route_map = ox.plot_route_folium(G, tsp_path, popup_attribute='name', tiles='cartodbpositron')
-            st.markdown("### Turfcut Route Map")
-            st_data = st_folium(route_map, width=800, height=600)
+            if tsp_path and len(tsp_path) > 1:
+                progress.progress(0.9, text="Routing: Plotting route map...")
+                route_map = ox.plot_route_folium(G, tsp_path, popup_attribute='name', tiles='cartodbpositron')
+                st.markdown("### Turfcut Route Map")
+                st_data = st_folium(route_map, width=800, height=600)
+            else:
+                st.warning("Route could not be generated. Falling back to unsorted building display.")
 
             turfcut_ids = [generate_turfcut_id(st.session_state.turfcut_counter + i) for i in range(len(buildings_gdf))]
             buildings_gdf["Turfcut ID"] = turfcut_ids
@@ -238,6 +253,11 @@ if buildings_gdf is not None and not buildings_gdf.empty:
 
         except Exception as e:
             st.error(f"Routing failed: {e}")
+            st.info("Continuing with fallback unsorted building data.")
+            turfcut_ids = [generate_turfcut_id(st.session_state.turfcut_counter + i) for i in range(len(buildings_gdf))]
+            buildings_gdf["Turfcut ID"] = turfcut_ids
+            st.session_state.turfcut_counter += len(buildings_gdf)
+            st.markdown(f"#### Turfcut ID: {turfcut_ids[0]} - {turfcut_ids[-1]}")
 
 # Footer
 st.markdown("---")
