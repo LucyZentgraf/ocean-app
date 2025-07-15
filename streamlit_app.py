@@ -23,7 +23,7 @@ if uploaded_csv:
         st.error("CSV must have a column named 'address'")
     else:
         st.success(f"Loaded {len(df)} addresses.")
-        st.markdown("### 📄 Uploaded Address Table")
+        st.markdown("Uploaded Member Data")
         st.dataframe(df, height=300)
 
 # --- Step 2: Draw Map Turf ---
@@ -96,7 +96,7 @@ if buildings_gdf is not None and not buildings_gdf.empty:
     st.info("Routing based on pedestrian-safe sidewalk logic will be implemented in the next version. This version lists all extracted addresses.")
 
     # --- Step 6: Final Table + Download ---
-    st.markdown("Turf Log)
+    st.markdown("Turf Log")
     st.dataframe(all_addresses, height=400)
 
     st.download_button(
